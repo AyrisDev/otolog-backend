@@ -1,12 +1,10 @@
 from fastapi import FastAPI, HTTPException, Header, Depends, status, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from prisma import Prisma
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, timedelta
-from passlib.context import CryptContext
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 import traceback
 import os
@@ -19,26 +17,12 @@ load_dotenv()
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "7b8d4b7d-a7c7-4824-8d74-7e6489378878-STITCHED-OtoLog")
 ALGORITHM = "HS256"
 try:
-    ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "43200"))
+    ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", str(60 * 24 * 30)))
 except:
     ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 30
 
-# Bcrypt'teki 72 byte bug'ını aşmak için pbkdf2_sha256'yı ana şema yaptık.
-pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login", auto_error=False)
-
-app = FastAPI(title="OtoLog API - Engine Fix V6")
-prisma = Prisma() # Global Prisma instance
-
-# Global exception handler
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    print(f"CRITICAL ERROR: {str(exc)}")
-    traceback.print_exc()
-    return JSONResponse(
-        status_code=500,
-        content={"detail": f"Engine Error: {str(exc)}", "trace": traceback.format_exc()}
-    )
+app = FastAPI(title="OtoLog API - Zero-Auth V7")
+prisma = Prisma()
 
 # CORS
 app.add_middleware(
@@ -49,14 +33,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- MODELLER ---
-class LocationPointCreate(BaseModel):
-    latitude: float
-    longitude: float
-    timestamp: Optional[datetime] = None
-
-class BulkLocationUpdate(BaseModel):
-    locations: List[LocationPointCreate]
+# --- MODELLER (Pydantic) ---
 
 class TripStart(BaseModel):
     userId: str
@@ -73,61 +50,67 @@ class FuelCreate(BaseModel):
     totalPrice: float
     currentKm: float
 
+class LocationPointCreate(BaseModel):
+    latitude: float
+    longitude: float
+    timestamp: Optional[datetime] = None
+
 # --- YARDIMCI FONKSİYONLAR ---
+
 def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-async def get_current_user(token: str = Depends(oauth2_scheme)):
-    if not token:
-        raise HTTPException(status_code=401, detail="Auth token missing")
+async def get_current_user(token: str = Header(None, alias="Authorization")):
+    if not token or not token.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Yetkisiz erişim: Token bulunamadı.")
+    
+    actual_token = token.split(" ")[1]
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(actual_token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = payload.get("sub")
-        if not user_id: raise HTTPException(status_code=401)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Geçersiz token.")
         return user_id
-    except:
-        raise HTTPException(status_code=401, detail="Invalid session")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Oturum süresi dolmuş veya geçersiz.")
 
 # --- ENDPOINTLER ---
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "v6-engine-fix", "timestamp": datetime.now()}
+    return {"status": "ok", "version": "v7-zero-auth", "timestamp": datetime.now()}
 
 @app.post("/device-login")
 async def device_login(request: Request, x_device_id: Optional[str] = Header(None, alias="X-Device-ID")):
     dev_id = x_device_id or request.headers.get("x-device-id")
+    
     if not dev_id:
-        raise HTTPException(status_code=400, detail="X-Device-ID header missing")
+        raise HTTPException(status_code=400, detail="Cihaz kimliği (X-Device-ID) eksik.")
         
     try:
         if not prisma.is_connected():
             await prisma.connect()
             
+        # Kullanıcıyı cihaz ID'si ile ara
         user = await prisma.user.find_unique(
             where={"deviceId": dev_id},
             include={"vehicles": True}
         )
         
+        # Eğer böyle bir kullanıcı yoksa, sadece cihaz ID'si ile oluştur
         if not user:
-            print(f"Auto-registering device: {dev_id}")
-            safe_id = "".join(c for c in dev_id if c.isalnum())[:10]
-            email = f"u_{safe_id}_{datetime.now().strftime('%M%S')}@stitched.app"
-            # SHA256 kullandığımız için artık uzunluk hatası yok
-            hashed_pwd = pwd_context.hash(dev_id) 
-            
+            print(f"Creating zero-auth user for device: {dev_id}")
             user = await prisma.user.create(
                 data={
-                    "email": email,
-                    "password": hashed_pwd,
-                    "name": "Stitched Driver",
-                    "deviceId": dev_id
+                    "deviceId": dev_id,
+                    "name": "Sürücü"
                 }
             )
             
+            # İlk araç kaydını otomatik yap (BMW 1.16)
             await prisma.vehicle.create(
                 data={
                     "brand": "BMW",
@@ -136,61 +119,73 @@ async def device_login(request: Request, x_device_id: Optional[str] = Header(Non
                     "userId": user.id
                 }
             )
+            # Bilgileri tekrar çek
             user = await prisma.user.find_unique(where={"id": user.id}, include={"vehicles": True})
+            print("Zero-auth user and default vehicle created.")
 
+        # Varsayılan aracı belirle
         default_vehicle = next((v for v in user.vehicles if v.isDefault), user.vehicles[0] if user.vehicles else None)
+        
+        # Güvenli JWT üret (Identity = User ID)
         token = create_access_token(data={"sub": user.id})
         
         return {
             "status": "success",
             "access_token": token,
-            "user": {"id": user.id, "email": user.email, "name": user.name},
+            "token_type": "bearer",
+            "user": {
+                "id": user.id,
+                "name": user.name
+            },
             "defaultVehicleId": default_vehicle.id if default_vehicle else None
         }
     except Exception as e:
+        print(f"DEVICE LOGIN CRITICAL ERROR: {str(e)}")
         traceback.print_exc()
-        raise e
+        raise HTTPException(status_code=500, detail="Otomatik giriş sistemi şu an kapalı.")
+
+# --- DİĞER KORUMALI ENDPOINTLER ---
 
 @app.get("/dashboard/summary")
 async def get_summary(userId: Optional[str] = None, current_user_id: str = Depends(get_current_user)):
+    # Güvenlik Kontrolü: Sadece kendi verisini görebilir
     active_id = userId if (userId and userId != "undefined") else current_user_id
-    if active_id != current_user_id: raise HTTPException(status_code=403)
-    
+    if active_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Yetkisiz veri erişimi.")
+        
     try:
         if not prisma.is_connected(): await prisma.connect()
         trips = await prisma.trip.find_many(where={"userId": active_id, "isActive": False})
         fuel = await prisma.fuellog.find_many(where={"userId": active_id})
         
-        t_km = sum(t.distanceKm or 0 for t in trips)
-        t_price = sum(f.totalPrice for f in fuel)
-        t_liters = sum(f.liters for f in fuel)
+        total_km = sum(t.distanceKm or 0 for t in trips)
+        total_spend = sum(f.totalPrice for f in fuel)
+        total_liters = sum(f.liters for f in fuel)
         
         return {
-            "total_km": round(t_km, 2),
-            "total_spend": round(t_price, 2),
-            "avg_consumption": round((t_liters / (t_km / 100)), 2) if t_km > 0 else 0,
+            "total_km": round(total_km, 2),
+            "total_spend": round(total_spend, 2),
+            "avg_consumption": round((total_liters / (total_km / 100)), 2) if total_km > 0 else 0,
             "trip_count": len(trips)
         }
     except Exception as e:
-        traceback.print_exc()
-        raise e
+        print(f"SUMMARY ERROR: {e}")
+        raise HTTPException(status_code=500, detail="Özet raporu hazırlanamadı.")
 
-@app.post("/trips/start")
-async def start_trip(data: TripStart, current_user_id: str = Depends(get_current_user)):
-    if data.userId != current_user_id: raise HTTPException(status_code=403)
+@app.get("/trips")
+async def get_trips(userId: Optional[str] = None, current_user_id: str = Depends(get_current_user)):
+    active_id = userId if (userId and userId != "undefined") else current_user_id
+    if active_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Yetkisiz erişim.")
     try:
         if not prisma.is_connected(): await prisma.connect()
-        return await prisma.trip.create(
-            data={
-                "userId": data.userId,
-                "vehicleId": data.vehicleId,
-                "startKm": data.startKm,
-                "isActive": True
-            }
+        return await prisma.trip.find_many(
+            where={"userId": active_id, "isActive": False},
+            order={"startTime": "desc"}
         )
     except Exception as e:
-        traceback.print_exc()
-        raise e
+        print(f"TRIPS ERROR: {e}")
+        raise HTTPException(status_code=500, detail="Yolculuk geçmişi alınamadı.")
 
 @app.on_event("startup")
 async def startup():
