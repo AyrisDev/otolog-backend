@@ -30,6 +30,10 @@ model Vehicle {
   id          String   @id @default(cuid())
   brand       String   // Örn: BMW
   model       String   // Örn: 1.16
+  year            Int      @default(0) // Model Yılı
+  fuelType        String?  // Yakıt Tipi
+  transmission    String?  // Vites Tipi
+  avgConsumption  Float?   // Ortalama Tüketim
   plate       String?  // Plaka
   isDefault   Boolean  @default(false) // Varsayılan araç mı?
   userId      String

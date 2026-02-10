@@ -191,6 +191,7 @@ class VehicleAdd(BaseModel):
     year: int
     fuelType: Optional[str] = None
     transmission: Optional[str] = None
+    avgConsumption: Optional[float] = None
     
 @app.post("/vehicles/add")
 async def add_vehicle(data: VehicleAdd, current_user_id: str = Depends(get_current_user)):
@@ -206,8 +207,11 @@ async def add_vehicle(data: VehicleAdd, current_user_id: str = Depends(get_curre
                 "userId": current_user_id,
                 "brand": data.brand,
                 "model": data.model,
+                "year": data.year,
+                "fuelType": data.fuelType,
+                "transmission": data.transmission,
+                "avgConsumption": data.avgConsumption,
                 "isDefault": is_default
-                # Yıl, yakıt tipi vb. şemada yoksa eklemiyoruz, varsa şemayı güncellemek lazım
             }
         )
         return new_vehicle
