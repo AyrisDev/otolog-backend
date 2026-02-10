@@ -20,7 +20,7 @@ app.add_middleware(
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "timestamp": datetime.now()}
+    return {"status": "ok", "version": "v2", "timestamp": datetime.now()}
 
 
 class LocationPointCreate(BaseModel):
@@ -80,8 +80,10 @@ async def register(data: UserRegister, x_device_id: Optional[str] = Header(None)
             if existing_device:
                 raise HTTPException(status_code=400, detail="This device is already associated with another account")
             
-        # Şifreyi hashle
-        hashed_password = pwd_context.hash(data.password)
+        # Şifreyi hashle (bcrypt 72 byte sınırı var, bu yüzden gerekirse kırpıyoruz)
+        safe_password = data.password[:72]
+        print(f"Hashing password (length: {len(data.password)})")
+        hashed_password = pwd_context.hash(safe_password)
         
         # Kullanıcıyı oluştur
         user = await prisma.user.create(
