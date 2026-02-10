@@ -18,25 +18,26 @@ load_dotenv()
 # --- GÜVENLİK AYARLARI ---
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "7b8d4b7d-a7c7-4824-8d74-7e6489378878-STITCHED-OtoLog")
 ALGORITHM = "HS256"
-# .env'den gelen değeri güvenli bir şekilde int'e çevir
 try:
     ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "43200"))
 except:
     ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 30
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Bcrypt'teki 72 byte bug'ını aşmak için pbkdf2_sha256'yı ana şema yaptık.
+pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login", auto_error=False)
 
-app = FastAPI(title="OtoLog API - Diagnostics V5")
+app = FastAPI(title="OtoLog API - Engine Fix V6")
+prisma = Prisma() # Global Prisma instance
 
-# --- GLOBAL HATA YAKALAYICI (Tüm 500 hatalarını yakalayıp içeriğini döndürür) ---
+# Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    print(f"CRITICAL ERROR CAUGHT: {str(exc)}")
+    print(f"CRITICAL ERROR: {str(exc)}")
     traceback.print_exc()
     return JSONResponse(
         status_code=500,
-        content={"detail": f"Server Error: {str(exc)}", "trace": traceback.format_exc()}
+        content={"detail": f"Engine Error: {str(exc)}", "trace": traceback.format_exc()}
     )
 
 # CORS
@@ -81,51 +82,47 @@ def create_access_token(data: dict):
 
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     if not token:
-        raise HTTPException(status_code=401, detail="Oturum yok.")
+        raise HTTPException(status_code=401, detail="Auth token missing")
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = payload.get("sub")
         if not user_id: raise HTTPException(status_code=401)
         return user_id
     except:
-        raise HTTPException(status_code=401, detail="Geçersiz oturum.")
+        raise HTTPException(status_code=401, detail="Invalid session")
 
 # --- ENDPOINTLER ---
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "v5-diagnostics", "timestamp": datetime.now()}
+    return {"status": "ok", "version": "v6-engine-fix", "timestamp": datetime.now()}
 
 @app.post("/device-login")
 async def device_login(request: Request, x_device_id: Optional[str] = Header(None, alias="X-Device-ID")):
-    # Header alias ekledik çünkü iOS büyük/küçük harf seçebilir
     dev_id = x_device_id or request.headers.get("x-device-id")
-    
     if not dev_id:
-        raise HTTPException(status_code=400, detail="Device ID (X-Device-ID) header'da bulunamadı.")
+        raise HTTPException(status_code=400, detail="X-Device-ID header missing")
         
-    print(f"Device Login Request for ID: {dev_id}")
-    
-    prisma = Prisma()
-    await prisma.connect()
-    
     try:
+        if not prisma.is_connected():
+            await prisma.connect()
+            
         user = await prisma.user.find_unique(
             where={"deviceId": dev_id},
             include={"vehicles": True}
         )
         
         if not user:
-            print("User not found, starting silent registration...")
-            # Güvenli email
-            safe_id = "".join(c for c in dev_id if c.isalnum())[:12]
-            dummy_email = f"u_{safe_id}_{datetime.now().strftime('%M%S')}@stitched.app"
-            dummy_password = pwd_context.hash(dev_id[:72])
+            print(f"Auto-registering device: {dev_id}")
+            safe_id = "".join(c for c in dev_id if c.isalnum())[:10]
+            email = f"u_{safe_id}_{datetime.now().strftime('%M%S')}@stitched.app"
+            # SHA256 kullandığımız için artık uzunluk hatası yok
+            hashed_pwd = pwd_context.hash(dev_id) 
             
             user = await prisma.user.create(
                 data={
-                    "email": dummy_email,
-                    "password": dummy_password,
+                    "email": email,
+                    "password": hashed_pwd,
                     "name": "Stitched Driver",
                     "deviceId": dev_id
                 }
@@ -139,9 +136,7 @@ async def device_login(request: Request, x_device_id: Optional[str] = Header(Non
                     "userId": user.id
                 }
             )
-            
             user = await prisma.user.find_unique(where={"id": user.id}, include={"vehicles": True})
-            print("Silent registration success.")
 
         default_vehicle = next((v for v in user.vehicles if v.isDefault), user.vehicles[0] if user.vehicles else None)
         token = create_access_token(data={"sub": user.id})
@@ -152,20 +147,19 @@ async def device_login(request: Request, x_device_id: Optional[str] = Header(Non
             "user": {"id": user.id, "email": user.email, "name": user.name},
             "defaultVehicleId": default_vehicle.id if default_vehicle else None
         }
-    finally:
-        await prisma.disconnect()
-
-# --- DİĞER KORUMALI ENDPOINTLER ---
+    except Exception as e:
+        traceback.print_exc()
+        raise e
 
 @app.get("/dashboard/summary")
 async def get_summary(userId: Optional[str] = None, current_user_id: str = Depends(get_current_user)):
     active_id = userId if (userId and userId != "undefined") else current_user_id
     if active_id != current_user_id: raise HTTPException(status_code=403)
     
-    p = Prisma(); await p.connect()
     try:
-        trips = await p.trip.find_many(where={"userId": active_id, "isActive": False})
-        fuel = await p.fuellog.find_many(where={"userId": active_id})
+        if not prisma.is_connected(): await prisma.connect()
+        trips = await prisma.trip.find_many(where={"userId": active_id, "isActive": False})
+        fuel = await prisma.fuellog.find_many(where={"userId": active_id})
         
         t_km = sum(t.distanceKm or 0 for t in trips)
         t_price = sum(f.totalPrice for f in fuel)
@@ -177,9 +171,33 @@ async def get_summary(userId: Optional[str] = None, current_user_id: str = Depen
             "avg_consumption": round((t_liters / (t_km / 100)), 2) if t_km > 0 else 0,
             "trip_count": len(trips)
         }
-    finally: await p.disconnect()
+    except Exception as e:
+        traceback.print_exc()
+        raise e
+
+@app.post("/trips/start")
+async def start_trip(data: TripStart, current_user_id: str = Depends(get_current_user)):
+    if data.userId != current_user_id: raise HTTPException(status_code=403)
+    try:
+        if not prisma.is_connected(): await prisma.connect()
+        return await prisma.trip.create(
+            data={
+                "userId": data.userId,
+                "vehicleId": data.vehicleId,
+                "startKm": data.startKm,
+                "isActive": True
+            }
+        )
+    except Exception as e:
+        traceback.print_exc()
+        raise e
 
 @app.on_event("startup")
 async def startup():
-    # Global prisma instance startup'da bağlanır (yukarıdaki endpoint bağımsız v5 denemesi için)
-    pass
+    if not prisma.is_connected():
+        await prisma.connect()
+
+@app.on_event("shutdown")
+async def shutdown():
+    if prisma.is_connected():
+        await prisma.disconnect()

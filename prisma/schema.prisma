@@ -16,10 +16,10 @@ datasource db {
 
 model User {
   id        String    @id @default(cuid())
-  email     String    @unique
-  password  String
+  email     String?   @unique
+  password  String?
   name      String?
-  deviceId  String?   @unique // Telefonun benzersiz kimliği
+  deviceId  String    @unique // Telefonun benzersiz kimliği (ZORUNLU)
   vehicles  Vehicle[] // Kullanıcının araçları
   trips     Trip[]
   fuelLogs  FuelLog[]
