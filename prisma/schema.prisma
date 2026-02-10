@@ -11,6 +11,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  url      = "postgres://postgres:6UuYjVZ13ZKfmgKRIsXiCqNjLriAkvugGG9awYqM4BXo78Sg39JypbyNgV72K0zY@65.109.236.58:5433/postgres"
 }
 
 
