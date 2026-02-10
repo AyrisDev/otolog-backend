@@ -77,6 +77,21 @@ class UserLogin(BaseModel):
     email: str
     password: str
 
+class TripStart(BaseModel):
+    userId: str
+    vehicleId: str
+    startKm: Optional[float] = 0
+
+class TripEnd(BaseModel):
+    endKm: float
+    distanceKm: float
+
+class FuelCreate(BaseModel):
+    userId: str
+    liters: float
+    totalPrice: float
+    currentKm: float
+
 # --- ENDPOINTLER ---
 
 @app.get("/health")
@@ -306,18 +321,3 @@ async def startup():
 async def shutdown():
     await prisma.disconnect()
 
-# --- MODELLER (Pydantic) ---
-class TripStart(BaseModel):
-    userId: str
-    vehicleId: str
-    startKm: Optional[float] = 0
-
-class TripEnd(BaseModel):
-    endKm: float
-    distanceKm: float
-
-class FuelCreate(BaseModel):
-    userId: str
-    liters: float
-    totalPrice: float
-    currentKm: float
