@@ -3,7 +3,7 @@ from prisma import Prisma
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
-
+from passlib.context import CryptContext
 app = FastAPI(title="OtoLog API - Pro")
 prisma = Prisma()
 
@@ -19,7 +19,7 @@ class LocationPointCreate(BaseModel):
 
 class BulkLocationUpdate(BaseModel):
     locations: List[LocationPointCreate]
-
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 @app.post("/trips/{trip_id}/location")
 async def add_location(trip_id: str, data: LocationPointCreate):
     # Tekil koordinat kaydı
@@ -37,7 +37,31 @@ async def add_location(trip_id: str, data: LocationPointCreate):
     except Exception as e:
         print(f"Error adding location: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
+@app.post("/register")
+async def register(user_data: dict):
+    # Şifreyi hashle (Güvenlik için şart!)
+    hashed_password = pwd_context.hash(user_data['password'])
+    
+    # Kullanıcıyı oluştur
+    user = await prisma.user.create(
+        data={
+            "email": user_data['email'],
+            "password": hashed_password,
+            "name": user_data['name'],
+            "deviceId": user_data['deviceId'] # Expo'dan gelecek
+        }
+    )
+    
+    # Kayıtla beraber BMW 1.16'yı otomatik (default) olarak ekle
+    await prisma.vehicle.create(
+        data={
+            "brand": "BMW",
+            "model": "1.16",
+            "isDefault": True,
+            "userId": user.id
+        }
+    )
+    return {"status": "success", "userId": user.id}
 @app.post("/trips/{trip_id}/locations/bulk")
 async def add_locations_bulk(trip_id: str, data: BulkLocationUpdate):
     # Tüm noktaları tek seferde veritabanına basıyoruz
