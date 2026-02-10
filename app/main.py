@@ -7,6 +7,36 @@ from datetime import datetime
 app = FastAPI(title="OtoLog API - Pro")
 prisma = Prisma()
 
+
+from typing import List
+from datetime import datetime
+
+# Yeni Model: Çoklu Koordinat Paketi
+class LocationPointCreate(BaseModel):
+    latitude: float
+    longitude: float
+    timestamp: datetime
+
+class BulkLocationUpdate(BaseModel):
+    locations: List[LocationPointCreate]
+
+@app.post("/trips/{trip_id}/locations/bulk")
+async def add_locations_bulk(trip_id: str, data: BulkLocationUpdate):
+    # Tüm noktaları tek seferde veritabanına basıyoruz (Performans için kritik)
+    points = [
+        {**loc.dict(), "tripId": trip_id} 
+        for loc in data.locations
+    ]
+    await prisma.locationpoint.create_many(data=points)
+    return {"status": "success", "added": len(points)}
+
+@app.get("/trips/{trip_id}/full-path")
+async def get_trip_path(trip_id: str):
+    # Haritaya dikişli (stitch) çizgi çizmek için tüm rotayı çeker
+    return await prisma.trip.find_unique(
+        where={"id": trip_id},
+        include={"locations": True}
+    )
 @app.on_event("startup")
 async def startup():
     await prisma.connect()
@@ -35,12 +65,19 @@ async def start_trip(data: TripStart):
     return await prisma.trip.create(data={"startKm": data.startKm, "isActive": True})
 
 @app.patch("/trips/end/{trip_id}")
-async def end_trip(trip_id: str, data: TripEnd):
+async def end_trip(trip_id: str):
+    # 1. Bu trip'e ait tüm koordinatları çek
+    points = await prisma.locationpoint.find_many(
+        where={"tripId": trip_id},
+        order={"timestamp": "asc"}
+    )
+    
+    # 2. Koordinatlar arası mesafe hesapla (Haversine Formülü veya Basit Toplam)
+    # Şimdilik Expo'dan gelen veriyi kabul edebiliriz ama backend doğrulaması şart.
+    
     return await prisma.trip.update(
         where={"id": trip_id},
         data={
-            "endKm": data.endKm,
-            "distanceKm": data.distanceKm,
             "isActive": False,
             "endTime": datetime.now()
         }
