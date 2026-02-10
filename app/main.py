@@ -64,6 +64,7 @@ class FuelCreate(BaseModel):
 async def get_trips():
     # Geçmiş tüm yolculukları listeler
     return await prisma.trip.find_many(
+        include={"locations": True},
         order={"startTime": "desc"}
     )
 
