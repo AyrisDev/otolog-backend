@@ -4,8 +4,21 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
 from passlib.context import CryptContext
+from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI(title="OtoLog API - Pro")
 prisma = Prisma()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "timestamp": datetime.now()}
 
 
 from typing import List
@@ -46,36 +59,60 @@ async def add_location(trip_id: str, data: LocationPointCreate):
     except Exception as e:
         print(f"Error adding location: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+from fastapi import Header
+
 @app.post("/register")
-async def register(data: UserRegister):
-    # Check if user exists
-    existing = await prisma.user.find_unique(where={"email": data.email})
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
+async def register(data: UserRegister, x_device_id: Optional[str] = Header(None)):
+    print(f"Registration attempt for: {data.email}")
+    # Use deviceId from header if not in body
+    device_id = data.deviceId or x_device_id
+    print(f"Device ID: {device_id}")
+    
+    try:
+        # Check if user exists
+        existing = await prisma.user.find_unique(where={"email": data.email})
+        if existing:
+            raise HTTPException(status_code=400, detail="Email already registered")
+
+        # Device ID check (since it's unique in schema)
+        if device_id:
+            existing_device = await prisma.user.find_unique(where={"deviceId": device_id})
+            if existing_device:
+                # If this device is already registered, we could allow it or block it.
+                # PRD says "deviceId should be unique". Let's return a clear error.
+                raise HTTPException(status_code=400, detail="This device is already associated with another account")
+            
+        # Şifreyi hashle
+        hashed_password = pwd_context.hash(data.password)
         
-    # Şifreyi hashle
-    hashed_password = pwd_context.hash(data.password)
-    
-    # Kullanıcıyı oluştur
-    user = await prisma.user.create(
-        data={
-            "email": data.email,
-            "password": hashed_password,
-            "name": data.name,
-            "deviceId": data.deviceId
-        }
-    )
-    
-    # Kayıtla beraber BMW 1.16'yı otomatik (default) olarak ekle
-    await prisma.vehicle.create(
-        data={
-            "brand": "BMW",
-            "model": "1.16",
-            "isDefault": True,
-            "userId": user.id
-        }
-    )
-    return {"status": "success", "userId": user.id}
+        # Kullanıcıyı oluştur
+        user = await prisma.user.create(
+            data={
+                "email": data.email,
+                "password": hashed_password,
+                "name": data.name,
+                "deviceId": device_id
+            }
+        )
+        
+        # Kayıtla beraber BMW 1.16'yı otomatik (default) olarak ekle
+        await prisma.vehicle.create(
+            data={
+                "brand": "BMW",
+                "model": "1.16",
+                "isDefault": True,
+                "userId": user.id
+            }
+        )
+        print(f"User registered successfully: {user.id}")
+        return {"status": "success", "userId": user.id}
+    except Exception as e:
+        print(f"REGISTRATION ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/login")
 async def login(data: UserLogin):
