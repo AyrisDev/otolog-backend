@@ -112,6 +112,23 @@ async def get_car_models(make: str):
         print(f"Error fetching models: {e}")
         return []
 
+@app.get("/cars/years")
+async def get_car_years(make: str, model: str):
+    if not prisma.is_connected(): await prisma.connect()
+    try:
+        years = await prisma.carlibrary.find_many(
+            where={
+                'brand': {'equals': make, 'mode': 'insensitive'},
+                'model': {'equals': model, 'mode': 'insensitive'}
+            },
+            distinct=['year'],
+            order={'year': 'desc'}
+        )
+        return [str(y.year) for y in years if y.year]
+    except Exception as e:
+        print(f"Error fetching years: {e}")
+        return []
+
 @app.get("/cars/search-and-save")
 async def search_and_save(make: str, model: str, year: int):
     # 1. Önce kendi DB'mizde var mı bak?
