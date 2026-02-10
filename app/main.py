@@ -85,6 +85,33 @@ async def get_current_user(token: str = Header(None, alias="Authorization")):
 async def health():
     return {"status": "ok", "version": "v8-car-search", "timestamp": datetime.now()}
 
+@app.get("/cars/makes")
+async def get_car_makes():
+    if not prisma.is_connected(): await prisma.connect()
+    try:
+        makes = await prisma.carlibrary.find_many(
+            distinct=['brand'],
+            order={'brand': 'asc'}
+        )
+        return [m.brand for m in makes if m.brand]
+    except Exception as e:
+        print(f"Error fetching makes: {e}")
+        return []
+
+@app.get("/cars/models")
+async def get_car_models(make: str):
+    if not prisma.is_connected(): await prisma.connect()
+    try:
+        models = await prisma.carlibrary.find_many(
+            where={'brand': {'equals': make, 'mode': 'insensitive'}},
+            distinct=['model'],
+            order={'model': 'asc'}
+        )
+        return [m.model for m in models if m.model]
+    except Exception as e:
+        print(f"Error fetching models: {e}")
+        return []
+
 @app.get("/cars/search-and-save")
 async def search_and_save(make: str, model: str, year: int):
     # 1. Önce kendi DB'mizde var mı bak?
@@ -105,16 +132,21 @@ async def search_and_save(make: str, model: str, year: int):
     headers = {'X-Api-Key': 'jgIJMKCsES3XVItWOMmqrjv6OyQAGIMwVQ7nde05'}
     url = f'https://api.api-ninjas.com/v1/cars?make={make}&model={model}&year={year}'
     
+    print(f"Searching for car: {make} {model} {year} at {url}")
+
     try:
         response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code == 200 and response.json():
-            # API liste dönüyor, ilk elemanı al
+        print(f"Ninja API Status: {response.status_code}")
+        
+        if response.status_code == 200:
             data_list = response.json()
             if not data_list:
-                 raise HTTPException(status_code=404, detail="Araç API'de bulunamadı")
+                print("Ninja API returned empty list.")
+                raise HTTPException(status_code=404, detail="Araç veritabanında bulunamadı.")
                  
             api_data = data_list[0]
-            
+            print(f"Car found: {api_data}")
+
             # MPG -> L/100km formülü: 235.21 / MPG
             mpg = api_data.get('combination_mpg')
             consumption = round(235.21 / float(mpg), 2) if mpg else None
@@ -134,9 +166,10 @@ async def search_and_save(make: str, model: str, year: int):
             return new_car
     except Exception as e:
         print(f"CAR API ERROR: {e}")
-        pass
+        traceback.print_exc()
+        if isinstance(e, HTTPException): raise e
         
-    raise HTTPException(status_code=404, detail="Araç bulunamadı")
+    raise HTTPException(status_code=404, detail="Araç bulunamadı.")
 
 # --- ARAÇ YÖNETİMİ ENDPOINTLERİ ---
 
