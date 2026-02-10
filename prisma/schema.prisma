@@ -16,14 +16,24 @@ datasource db {
 
 
 model Trip {
-  id          String    @id @default(uuid())
-  startTime   DateTime  @default(now())
+  id          String     @id @default(cuid())
+  startTime   DateTime   @default(now())
   endTime     DateTime?
   startKm     Float?
   endKm       Float?
-  distanceKm  Float     @default(0)
-  isActive    Boolean   @default(true)
-  routeData   Json?     // Koordinatları dizi olarak saklamak için (Otomatik takip için kritik)
+  distanceKm  Float?
+  isActive    Boolean    @default(true)
+  // Geçilen noktalar buraya kaydedilecek
+  locations   LocationPoint[]
+}
+
+model LocationPoint {
+  id        String   @id @default(cuid())
+  latitude  Float
+  longitude Float
+  timestamp DateTime @default(now())
+  tripId    String
+  trip      Trip     @relation(fields: [tripId], references: [id])
 }
 
 model FuelLog {
