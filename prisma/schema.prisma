@@ -11,7 +11,30 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = "postgres://postgres:6UuYjVZ13ZKfmgKRIsXiCqNjLriAkvugGG9awYqM4BXo78Sg39JypbyNgV72K0zY@65.109.236.58:5433/postgres"
+}
+
+model User {
+  id        String    @id @default(cuid())
+  email     String    @unique
+  password  String
+  name      String?
+  deviceId  String?   @unique // Telefonun benzersiz kimliği
+  vehicles  Vehicle[] // Kullanıcının araçları
+  trips     Trip[]
+  fuelLogs  FuelLog[]
+  createdAt DateTime  @default(now())
+}
+
+model Vehicle {
+  id          String   @id @default(cuid())
+  brand       String   // Örn: BMW
+  model       String   // Örn: 1.16
+  plate       String?  // Plaka
+  isDefault   Boolean  @default(false) // Varsayılan araç mı?
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  trips       Trip[]
+  createdAt   DateTime @default(now())
 }
 
 
@@ -25,6 +48,10 @@ model Trip {
   isActive    Boolean    @default(true)
   // Geçilen noktalar buraya kaydedilecek
   locations   LocationPoint[]
+  vehicleId   String
+  vehicle     Vehicle  @relation(fields: [vehicleId], references: [id])
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
 }
 
 model LocationPoint {
@@ -42,4 +69,6 @@ model FuelLog {
   totalPrice  Float
   currentKm   Float
   date        DateTime @default(now())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
 }
