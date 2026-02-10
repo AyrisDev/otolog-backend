@@ -185,13 +185,39 @@ async def device_login(x_device_id: Optional[str] = Header(None)):
         raise HTTPException(status_code=400, detail="Cihaz kimliği eksik.")
         
     try:
+        # Önce bu cihazla kayıtlı kullanıcı var mı bak
         user = await prisma.user.find_unique(
             where={"deviceId": x_device_id},
             include={"vehicles": True}
         )
         
+        # Eğer kullanıcı yoksa, SESSİZ KAYIT (Silent Register) yap
         if not user:
-            raise HTTPException(status_code=404, detail="Cihaz kayıtlı değil.")
+            print(f"Silent registration for device: {x_device_id}")
+            # Benzersiz bir e-posta üret (cihaz id bazlı)
+            dummy_email = f"user_{x_device_id[:8]}@stitched.app"
+            dummy_password = pwd_context.hash(x_device_id) # Cihaz ID'sini şifre olarak kullan (arka planda)
+            
+            user = await prisma.user.create(
+                data={
+                    "email": dummy_email,
+                    "password": dummy_password,
+                    "name": "Stitched Driver",
+                    "deviceId": x_device_id
+                }
+            )
+            
+            # Default araç ekle
+            await prisma.vehicle.create(
+                data={
+                    "brand": "BMW",
+                    "model": "1.16",
+                    "isDefault": True,
+                    "userId": user.id
+                }
+            )
+            # User bilgilerini araçlarla beraber tekrar çek (ilişkiler için)
+            user = await prisma.user.find_unique(where={"id": user.id}, include={"vehicles": True})
             
         default_vehicle = next((v for v in user.vehicles if v.isDefault), user.vehicles[0] if user.vehicles else None)
         
@@ -208,10 +234,9 @@ async def device_login(x_device_id: Optional[str] = Header(None)):
             "defaultVehicleId": default_vehicle.id if default_vehicle else None
         }
     except Exception as e:
-        print(f"DEVICE LOGIN ERROR: {e}")
+        print(f"DEVICE AUTO-LOGIN ERROR: {e}")
         traceback.print_exc()
-        if isinstance(e, HTTPException): raise e
-        raise HTTPException(status_code=500, detail="Cihaz girişi başarısız.")
+        raise HTTPException(status_code=500, detail="Otomatik giriş başarısız.")
 
 # --- KORUMALI ENDPOINTLER (JWT GEREKTİRİR) ---
 
