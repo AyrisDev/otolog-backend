@@ -11,7 +11,6 @@ prisma = Prisma()
 from typing import List
 from datetime import datetime
 
-# Yeni Model: Koordinat Paketi
 class LocationPointCreate(BaseModel):
     latitude: float
     longitude: float
@@ -19,6 +18,16 @@ class LocationPointCreate(BaseModel):
 
 class BulkLocationUpdate(BaseModel):
     locations: List[LocationPointCreate]
+
+class UserRegister(BaseModel):
+    email: str
+    password: str
+    name: Optional[str] = None
+    deviceId: Optional[str] = None
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 @app.post("/trips/{trip_id}/location")
 async def add_location(trip_id: str, data: LocationPointCreate):
@@ -38,17 +47,22 @@ async def add_location(trip_id: str, data: LocationPointCreate):
         print(f"Error adding location: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 @app.post("/register")
-async def register(user_data: dict):
-    # Şifreyi hashle (Güvenlik için şart!)
-    hashed_password = pwd_context.hash(user_data['password'])
+async def register(data: UserRegister):
+    # Check if user exists
+    existing = await prisma.user.find_unique(where={"email": data.email})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+        
+    # Şifreyi hashle
+    hashed_password = pwd_context.hash(data.password)
     
     # Kullanıcıyı oluştur
     user = await prisma.user.create(
         data={
-            "email": user_data['email'],
+            "email": data.email,
             "password": hashed_password,
-            "name": user_data['name'],
-            "deviceId": user_data['deviceId'] # Expo'dan gelecek
+            "name": data.name,
+            "deviceId": data.deviceId
         }
     )
     
@@ -62,6 +76,29 @@ async def register(user_data: dict):
         }
     )
     return {"status": "success", "userId": user.id}
+
+@app.post("/login")
+async def login(data: UserLogin):
+    user = await prisma.user.find_unique(
+        where={"email": data.email},
+        include={"vehicles": True}
+    )
+    
+    if not user or not pwd_context.verify(data.password, user.password):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    # Find default vehicle
+    default_vehicle = next((v for v in user.vehicles if v.isDefault), user.vehicles[0] if user.vehicles else None)
+    
+    return {
+        "status": "success", 
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "name": user.name
+        },
+        "defaultVehicleId": default_vehicle.id if default_vehicle else None
+    }
 @app.post("/trips/{trip_id}/locations/bulk")
 async def add_locations_bulk(trip_id: str, data: BulkLocationUpdate):
     # Tüm noktaları tek seferde veritabanına basıyoruz
@@ -103,6 +140,8 @@ async def shutdown():
 
 # --- MODELLER (Pydantic) ---
 class TripStart(BaseModel):
+    userId: str
+    vehicleId: str
     startKm: Optional[float] = 0
 
 class TripEnd(BaseModel):
@@ -110,6 +149,7 @@ class TripEnd(BaseModel):
     distanceKm: float
 
 class FuelCreate(BaseModel):
+    userId: str
     liters: float
     totalPrice: float
     currentKm: float
@@ -117,17 +157,28 @@ class FuelCreate(BaseModel):
 # --- YOLCULUK ENDPOINTLERİ ---
 
 @app.get("/trips")
-async def get_trips():
-    # Sadece tamamlanmış (aktif olmayan) yolculukları listeler
+async def get_trips(userId: Optional[str] = None):
+    # Belirli bir kullanıcıya ait tamamlanmış yolculukları listeler
+    where_clause = {"isActive": False}
+    if userId:
+        where_clause["userId"] = userId
+        
     return await prisma.trip.find_many(
-        where={"isActive": False},
+        where=where_clause,
         include={"locations": True},
         order={"startTime": "desc"}
     )
 
 @app.post("/trips/start")
 async def start_trip(data: TripStart):
-    return await prisma.trip.create(data={"startKm": data.startKm, "isActive": True})
+    return await prisma.trip.create(
+        data={
+            "userId": data.userId,
+            "vehicleId": data.vehicleId,
+            "startKm": data.startKm,
+            "isActive": True
+        }
+    )
 
 @app.patch("/trips/end/{trip_id}")
 async def end_trip(trip_id: str):
@@ -154,6 +205,7 @@ async def end_trip(trip_id: str):
 async def add_fuel(data: FuelCreate):
     return await prisma.fuellog.create(
         data={
+            "userId": data.userId,
             "liters": data.liters,
             "totalPrice": data.totalPrice,
             "currentKm": data.currentKm
@@ -163,11 +215,19 @@ async def add_fuel(data: FuelCreate):
 # --- İSTATİSTİK ENDPOINTLERİ ---
 
 @app.get("/dashboard/summary")
-async def get_summary():
-    trips = await prisma.trip.find_many(where={"isActive": False})
-    fuel = await prisma.fuellog.find_many()
+async def get_summary(userId: Optional[str] = None):
+    where_clause = {"isActive": False}
+    if userId:
+        where_clause["userId"] = userId
+        
+    trips = await prisma.trip.find_many(where=where_clause)
     
-    total_km = sum(t.distanceKm for t in trips)
+    fuel_where = {}
+    if userId:
+        fuel_where["userId"] = userId
+    fuel = await prisma.fuellog.find_many(where=fuel_where)
+    
+    total_km = sum(t.distanceKm or 0 for t in trips)
     total_spend = sum(f.totalPrice for f in fuel)
     # Ortalama Tüketim (Litre / 100km)
     total_liters = sum(f.liters for f in fuel)

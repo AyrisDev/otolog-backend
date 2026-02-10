@@ -2,3 +2,4 @@ fastapi
 uvicorn
 prisma
 pydantic
+passlib[bcrypt]
