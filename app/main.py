@@ -234,7 +234,8 @@ async def add_vehicle(data: VehicleAdd, current_user_id: str = Depends(get_curre
         return new_vehicle
     except Exception as e:
         print(f"ADD VEHICLE ERROR: {e}")
-        raise HTTPException(status_code=500, detail="Araç eklenemedi.")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Araç eklenemedi: {str(e)}")
 
 @app.patch("/vehicles/{vehicle_id}/default")
 async def set_default_vehicle(vehicle_id: str, current_user_id: str = Depends(get_current_user)):
