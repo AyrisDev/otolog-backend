@@ -10,6 +10,8 @@ import traceback
 import os
 from dotenv import load_dotenv
 
+import requests
+
 # .env dosyasını yükle
 load_dotenv()
 
@@ -21,7 +23,7 @@ try:
 except:
     ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 30
 
-app = FastAPI(title="OtoLog API - Zero-Auth V7")
+app = FastAPI(title="OtoLog API - Car Search V8")
 prisma = Prisma()
 
 # CORS
@@ -81,7 +83,60 @@ async def get_current_user(token: str = Header(None, alias="Authorization")):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "v7-zero-auth", "timestamp": datetime.now()}
+    return {"status": "ok", "version": "v8-car-search", "timestamp": datetime.now()}
+
+@app.get("/cars/search-and-save")
+async def search_and_save(make: str, model: str, year: int):
+    # 1. Önce kendi DB'mizde var mı bak?
+    if not prisma.is_connected(): await prisma.connect()
+    
+    existing_car = await prisma.carlibrary.find_first(
+        where={
+            "brand": {"equals": make, "mode": "insensitive"},
+            "model": {"equals": model, "mode": "insensitive"},
+            "year": year
+        }
+    )
+    
+    if existing_car:
+        return existing_car
+
+    # 2. DB'de yoksa Ninja API'ye git
+    headers = {'X-Api-Key': 'jgIJMKCsES3XVItWOMmqrjv6OyQAGIMwVQ7nde05'}
+    url = f'https://api.api-ninjas.com/v1/cars?make={make}&model={model}&year={year}'
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200 and response.json():
+            # API liste dönüyor, ilk elemanı al
+            data_list = response.json()
+            if not data_list:
+                 raise HTTPException(status_code=404, detail="Araç API'de bulunamadı")
+                 
+            api_data = data_list[0]
+            
+            # MPG -> L/100km formülü: 235.21 / MPG
+            mpg = api_data.get('combination_mpg')
+            consumption = round(235.21 / float(mpg), 2) if mpg else None
+            
+            new_car = await prisma.carlibrary.create(
+                data={
+                    "brand": api_data.get('make', make).capitalize(),
+                    "model": api_data.get('model', model).capitalize(),
+                    "year": year,
+                    "fuelType": api_data.get('fuel_type'),
+                    "transmission": api_data.get('transmission'),
+                    "cylinders": api_data.get('cylinders'),
+                    "combinationMpg": float(mpg) if mpg else None,
+                    "avgConsumption": consumption
+                }
+            )
+            return new_car
+    except Exception as e:
+        print(f"CAR API ERROR: {e}")
+        pass
+        
+    raise HTTPException(status_code=404, detail="Araç bulunamadı")
 
 @app.post("/device-login")
 async def device_login(request: Request, x_device_id: Optional[str] = Header(None, alias="X-Device-ID")):

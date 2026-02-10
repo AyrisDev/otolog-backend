@@ -55,6 +55,19 @@ model Trip {
   user        User     @relation(fields: [userId], references: [id])
 }
 
+model CarLibrary {
+  id              String   @id @default(cuid())
+  brand           String   // make
+  model           String   // model
+  year            Int      // year
+  fuelType        String?  // fuel_type
+  transmission    String?  // transmission
+  cylinders       Int?     // cylinders
+  combinationMpg  Float?   // API'den gelen orijinal veri
+  avgConsumption  Float?   // L/100km (hesapladığımız veri)
+  createdAt       DateTime @default(now())
+}
+
 model LocationPoint {
   id        String   @id @default(cuid())
   latitude  Float
