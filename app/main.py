@@ -83,7 +83,7 @@ async def get_current_user(token: str = Header(None, alias="Authorization")):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "v8-car-search", "timestamp": datetime.now()}
+    return {"status": "ok", "version": "v9-car-add-db", "timestamp": datetime.now()}
 
 @app.get("/cars/makes")
 async def get_car_makes():
