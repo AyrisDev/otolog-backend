@@ -138,6 +138,73 @@ async def search_and_save(make: str, model: str, year: int):
         
     raise HTTPException(status_code=404, detail="Araç bulunamadı")
 
+# --- ARAÇ YÖNETİMİ ENDPOINTLERİ ---
+
+@app.get("/vehicles")
+async def get_my_vehicles(current_user_id: str = Depends(get_current_user)):
+    try:
+        if not prisma.is_connected(): await prisma.connect()
+        return await prisma.vehicle.find_many(
+            where={"userId": current_user_id},
+            order={"createdAt": "desc"}
+        )
+    except Exception as e:
+        print(f"GET VEHICLES ERROR: {e}")
+        raise HTTPException(status_code=500, detail="Araçlarınız listelenemedi.")
+
+class VehicleAdd(BaseModel):
+    brand: str
+    model: str
+    year: int
+    fuelType: Optional[str] = None
+    transmission: Optional[str] = None
+    
+@app.post("/vehicles/add")
+async def add_vehicle(data: VehicleAdd, current_user_id: str = Depends(get_current_user)):
+    try:
+        if not prisma.is_connected(): await prisma.connect()
+        
+        # Eğer bu ilk araçsa direct default yap
+        count = await prisma.vehicle.count(where={"userId": current_user_id})
+        is_default = (count == 0)
+        
+        new_vehicle = await prisma.vehicle.create(
+            data={
+                "userId": current_user_id,
+                "brand": data.brand,
+                "model": data.model,
+                "isDefault": is_default
+                # Yıl, yakıt tipi vb. şemada yoksa eklemiyoruz, varsa şemayı güncellemek lazım
+            }
+        )
+        return new_vehicle
+    except Exception as e:
+        print(f"ADD VEHICLE ERROR: {e}")
+        raise HTTPException(status_code=500, detail="Araç eklenemedi.")
+
+@app.patch("/vehicles/{vehicle_id}/default")
+async def set_default_vehicle(vehicle_id: str, current_user_id: str = Depends(get_current_user)):
+    try:
+        if not prisma.is_connected(): await prisma.connect()
+        
+        async with prisma.tx() as transaction:
+            # 1. Önce kullanıcının tüm araçlarının default'unu false yap
+            await transaction.vehicle.update_many(
+                where={"userId": current_user_id},
+                data={"isDefault": False}
+            )
+            
+            # 2. Seçilen aracı true yap
+            updated = await transaction.vehicle.update(
+                where={"id": vehicle_id},
+                data={"isDefault": True}
+            )
+            return updated
+    except Exception as e:
+        print(f"SET DEFAULT ERROR: {e}")
+        # Transaction hatası oluşursa
+        raise HTTPException(status_code=500, detail="Varsayılan araç güncellenemedi.")
+
 @app.post("/device-login")
 async def device_login(request: Request, x_device_id: Optional[str] = Header(None, alias="X-Device-ID")):
     dev_id = x_device_id or request.headers.get("x-device-id")
