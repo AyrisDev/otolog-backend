@@ -60,6 +60,13 @@ class FuelCreate(BaseModel):
 
 # --- YOLCULUK ENDPOINTLERİ ---
 
+@app.get("/trips")
+async def get_trips():
+    # Geçmiş tüm yolculukları listeler
+    return await prisma.trip.find_many(
+        order={"startTime": "desc"}
+    )
+
 @app.post("/trips/start")
 async def start_trip(data: TripStart):
     return await prisma.trip.create(data={"startKm": data.startKm, "isActive": True})
