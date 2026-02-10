@@ -11,6 +11,6 @@
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
-    "prisma": "^7.3.0"
+    "prisma": "^5.17.0"
   }
 }
