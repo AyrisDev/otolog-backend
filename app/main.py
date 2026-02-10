@@ -11,24 +11,56 @@ prisma = Prisma()
 from typing import List
 from datetime import datetime
 
-# Yeni Model: Çoklu Koordinat Paketi
+# Yeni Model: Koordinat Paketi
 class LocationPointCreate(BaseModel):
     latitude: float
     longitude: float
-    timestamp: datetime
+    timestamp: Optional[datetime] = None
 
 class BulkLocationUpdate(BaseModel):
     locations: List[LocationPointCreate]
 
+@app.post("/trips/{trip_id}/location")
+async def add_location(trip_id: str, data: LocationPointCreate):
+    # Tekil koordinat kaydı
+    print(f"Adding location for trip {trip_id}: {data}")
+    try:
+        res = await prisma.locationpoint.create(
+            data={
+                "latitude": data.latitude,
+                "longitude": data.longitude,
+                "timestamp": data.timestamp if data.timestamp else datetime.now(),
+                "tripId": trip_id
+            }
+        )
+        return res
+    except Exception as e:
+        print(f"Error adding location: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/trips/{trip_id}/locations/bulk")
 async def add_locations_bulk(trip_id: str, data: BulkLocationUpdate):
-    # Tüm noktaları tek seferde veritabanına basıyoruz (Performans için kritik)
-    points = [
-        {**loc.dict(), "tripId": trip_id} 
-        for loc in data.locations
-    ]
-    await prisma.locationpoint.create_many(data=points)
-    return {"status": "success", "added": len(points)}
+    # Tüm noktaları tek seferde veritabanına basıyoruz
+    print(f"Bulk adding {len(data.locations)} points for trip {trip_id}")
+    try:
+        points = [
+            {
+                "latitude": loc.latitude,
+                "longitude": loc.longitude,
+                "timestamp": loc.timestamp if loc.timestamp else datetime.now(),
+                "tripId": trip_id
+            } 
+            for loc in data.locations
+        ]
+        if points:
+            # Note: create_many might have different syntax or limitations depending on Prisma version
+            # Using a loop or transaction if create_many is problematic in this env
+            for pt in points:
+                await prisma.locationpoint.create(data=pt)
+        return {"status": "success", "added": len(points)}
+    except Exception as e:
+        print(f"Error bulk adding locations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/trips/{trip_id}/full-path")
 async def get_trip_path(trip_id: str):
@@ -62,8 +94,9 @@ class FuelCreate(BaseModel):
 
 @app.get("/trips")
 async def get_trips():
-    # Geçmiş tüm yolculukları listeler
+    # Sadece tamamlanmış (aktif olmayan) yolculukları listeler
     return await prisma.trip.find_many(
+        where={"isActive": False},
         include={"locations": True},
         order={"startTime": "desc"}
     )
