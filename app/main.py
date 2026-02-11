@@ -83,7 +83,31 @@ async def get_current_user(token: str = Header(None, alias="Authorization")):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "v9-car-add-db", "timestamp": datetime.now()}
+    return {
+        "status": "ok",
+        "version": "v10",
+        "timestamp": datetime.now(),
+        "endpoints": {
+            "🔓 Açık": {
+                "GET /health": "API durumu ve endpoint listesi",
+                "GET /cars/makes": "Tüm araç markalarını listeler",
+                "GET /cars/models?make=BMW": "Markaya göre modelleri listeler",
+                "GET /cars/years?make=BMW&model=320i": "Marka+modele göre yılları listeler",
+                "GET /cars/search-and-save?make=BMW&model=320i&year=2020": "Araç detayını getirir (DB veya Ninja API)",
+            },
+            "🔑 Giriş": {
+                "POST /device-login (Header: X-Device-ID)": "Cihaz ile otomatik giriş/kayıt, JWT döner",
+            },
+            "🔒 JWT Gerekli (Authorization: Bearer <token>)": {
+                "GET /vehicles": "Kullanıcının araçlarını listeler",
+                "POST /vehicles/add": "Yeni araç ekler (brand, model, year, fuelType, transmission, avgConsumption)",
+                "PATCH /vehicles/{id}/default": "Varsayılan aracı değiştirir",
+                "DELETE /vehicles/{id}": "Araç siler (varsayılan araç silinemez)",
+                "GET /dashboard/summary": "Kullanıcının özet istatistikleri",
+                "GET /trips": "Tamamlanmış yolculuk geçmişi",
+            }
+        }
+    }
 
 @app.get("/cars/makes")
 async def get_car_makes():
@@ -259,6 +283,30 @@ async def set_default_vehicle(vehicle_id: str, current_user_id: str = Depends(ge
         print(f"SET DEFAULT ERROR: {e}")
         # Transaction hatası oluşursa
         raise HTTPException(status_code=500, detail="Varsayılan araç güncellenemedi.")
+
+@app.delete("/vehicles/{vehicle_id}")
+async def delete_vehicle(vehicle_id: str, current_user_id: str = Depends(get_current_user)):
+    try:
+        if not prisma.is_connected(): await prisma.connect()
+        
+        # Aracın bu kullanıcıya ait olduğunu doğrula
+        vehicle = await prisma.vehicle.find_first(
+            where={"id": vehicle_id, "userId": current_user_id}
+        )
+        
+        if not vehicle:
+            raise HTTPException(status_code=404, detail="Araç bulunamadı.")
+        
+        if vehicle.isDefault:
+            raise HTTPException(status_code=400, detail="Varsayılan araç silinemez. Önce başka bir aracı varsayılan yapın.")
+        
+        await prisma.vehicle.delete(where={"id": vehicle_id})
+        return {"status": "success", "message": "Araç silindi."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"DELETE VEHICLE ERROR: {e}")
+        raise HTTPException(status_code=500, detail=f"Araç silinemedi: {str(e)}")
 
 @app.post("/device-login")
 async def device_login(request: Request, x_device_id: Optional[str] = Header(None, alias="X-Device-ID")):
