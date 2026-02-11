@@ -284,21 +284,10 @@ async def device_login(request: Request, x_device_id: Optional[str] = Header(Non
                 data={
                     "deviceId": dev_id,
                     "name": "Sürücü"
-                }
+                },
+                include={"vehicles": True}
             )
-            
-            # İlk araç kaydını otomatik yap (BMW 1.16)
-            await prisma.vehicle.create(
-                data={
-                    "brand": "BMW",
-                    "model": "1.16",
-                    "isDefault": True,
-                    "userId": user.id
-                }
-            )
-            # Bilgileri tekrar çek
-            user = await prisma.user.find_unique(where={"id": user.id}, include={"vehicles": True})
-            print("Zero-auth user and default vehicle created.")
+            print("Zero-auth user created (no default vehicle).")
 
         # Varsayılan aracı belirle
         default_vehicle = next((v for v in user.vehicles if v.isDefault), user.vehicles[0] if user.vehicles else None)
