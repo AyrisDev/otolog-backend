@@ -308,6 +308,45 @@ async def delete_vehicle(vehicle_id: str, current_user_id: str = Depends(get_cur
         print(f"DELETE VEHICLE ERROR: {e}")
         raise HTTPException(status_code=500, detail=f"Araç silinemedi: {str(e)}")
 
+@app.post("/fuel/add")
+async def add_fuel(data: FuelCreate, current_user_id: str = Depends(get_current_user)):
+    try:
+        # Doğrulama
+        if data.userId != current_user_id:
+             raise HTTPException(status_code=403, detail="Kendi kullanıcı ID'niz ile işlem yapmalısınız.")
+         
+        if not prisma.is_connected(): await prisma.connect()
+
+        # Varsayılan aracı bul (FuelLog hangi araca ait?)
+        user = await prisma.user.find_unique(
+            where={"id": current_user_id},
+            include={"vehicles": True}
+        )
+        if not user or not user.vehicles:
+             raise HTTPException(status_code=400, detail="Yakıt eklemek için önce araç oluşturmalısınız.")
+
+        default_vehicle = next((v for v in user.vehicles if v.isDefault), user.vehicles[0])
+
+        new_entry = await prisma.fuellog.create(
+            data={
+                "userId": current_user_id,
+                "vehicleId": default_vehicle.id,
+                "liters": data.liters,
+                "totalPrice": data.totalPrice,
+                "currentKm": data.currentKm,
+                "date": datetime.now(),
+                "stationName": "Bilinmiyor", # Frontend'den gelmiyor, varsayılan
+                "fuelType": default_vehicle.fuelType or "Bilinmiyor"
+            }
+        )
+        return {"status": "success", "data": new_entry}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"ADD FUEL ERROR: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Yakıt kaydı oluşturulamadı.")
+
 @app.post("/device-login")
 async def device_login(request: Request, x_device_id: Optional[str] = Header(None, alias="X-Device-ID")):
     dev_id = x_device_id or request.headers.get("x-device-id")
