@@ -87,6 +87,9 @@ model FuelLog {
   totalPrice  Float
   currentKm   Float
   date        DateTime @default(now())
+  stationName String?  // Eklenen alan
+  fuelType    String?  // Eklenen alan
+  vehicleId   String?  // Hangi araca ait olduğu
   userId      String
   user        User     @relation(fields: [userId], references: [id])
 }

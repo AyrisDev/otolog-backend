@@ -347,6 +347,21 @@ async def add_fuel(data: FuelCreate, current_user_id: str = Depends(get_current_
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Yakıt kaydı oluşturulamadı.")
 
+@app.get("/fuel/logs")
+async def get_fuel_logs(userId: Optional[str] = None, current_user_id: str = Depends(get_current_user)):
+    active_id = userId if (userId and userId != "undefined") else current_user_id
+    if active_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Yetkisiz erişim.")
+    try:
+        if not prisma.is_connected(): await prisma.connect()
+        return await prisma.fuellog.find_many(
+            where={"userId": active_id},
+            order={"date": "desc"}
+        )
+    except Exception as e:
+        print(f"FUEL LOGS ERROR: {e}")
+        raise HTTPException(status_code=500, detail="Yakıt geçmişi alınamadı.")
+
 @app.post("/device-login")
 async def device_login(request: Request, x_device_id: Optional[str] = Header(None, alias="X-Device-ID")):
     dev_id = x_device_id or request.headers.get("x-device-id")
