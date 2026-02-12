@@ -362,6 +362,27 @@ async def get_fuel_logs(userId: Optional[str] = None, current_user_id: str = Dep
         print(f"FUEL LOGS ERROR: {e}")
         raise HTTPException(status_code=500, detail="Yakıt geçmişi alınamadı.")
 
+class PremiumSync(BaseModel):
+    transactionId: str
+
+@app.post("/premium/sync")
+async def sync_premium(data: PremiumSync, current_user_id: str = Depends(get_current_user)):
+    try:
+        if not prisma.is_connected(): await prisma.connect()
+        
+        updated_user = await prisma.user.update(
+            where={"id": current_user_id},
+            data={
+                "isLifetimePro": True,
+                "purchaseDate": datetime.now(),
+                "transactionId": data.transactionId
+            }
+        )
+        return {"status": "success", "isLifetimePro": updated_user.isLifetimePro}
+    except Exception as e:
+        print(f"PREMIUM SYNC ERROR: {e}")
+        raise HTTPException(status_code=500, detail="Premium durumu senkronize edilemedi.")
+
 @app.post("/device-login")
 async def device_login(request: Request, x_device_id: Optional[str] = Header(None, alias="X-Device-ID")):
     dev_id = x_device_id or request.headers.get("x-device-id")
@@ -403,7 +424,8 @@ async def device_login(request: Request, x_device_id: Optional[str] = Header(Non
             "token_type": "bearer",
             "user": {
                 "id": user.id,
-                "name": user.name
+                "name": user.name,
+                "isLifetimePro": user.isLifetimePro
             },
             "defaultVehicleId": default_vehicle.id if default_vehicle else None
         }

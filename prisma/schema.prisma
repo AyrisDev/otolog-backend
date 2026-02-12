@@ -15,15 +15,18 @@ datasource db {
 }
 
 model User {
-  id        String    @id @default(cuid())
-  email     String?   @unique
-  password  String?
-  name      String?
-  deviceId  String    @unique // Telefonun benzersiz kimliği (ZORUNLU)
-  vehicles  Vehicle[] // Kullanıcının araçları
-  trips     Trip[]
-  fuelLogs  FuelLog[]
-  createdAt DateTime  @default(now())
+  id             String    @id @default(cuid())
+  email          String?   @unique
+  password       String?
+  name           String?
+  deviceId       String    @unique // Telefonun benzersiz kimliği (ZORUNLU)
+  isLifetimePro  Boolean   @default(false)
+  purchaseDate   DateTime?
+  transactionId  String?   @unique // Mağaza referans kodu
+  vehicles       Vehicle[] // Kullanıcının araçları
+  trips          Trip[]
+  fuelLogs       FuelLog[]
+  createdAt      DateTime  @default(now())
 }
 
 model Vehicle {
