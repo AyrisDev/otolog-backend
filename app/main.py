@@ -55,7 +55,11 @@ class FuelCreate(BaseModel):
 class LocationPointCreate(BaseModel):
     latitude: float
     longitude: float
+    speed: Optional[float] = 0
     timestamp: Optional[datetime] = None
+
+class LocationsBulk(BaseModel):
+    locations: List[LocationPointCreate]
 
 # --- YARDIMCI FONKSİYONLAR ---
 
@@ -85,7 +89,7 @@ async def get_current_user(token: str = Header(None, alias="Authorization")):
 async def health():
     return {
         "status": "ok",
-        "version": "v10",
+        "version": "v11",
         "timestamp": datetime.now(),
         "endpoints": {
             "🔓 Açık": {
@@ -100,11 +104,14 @@ async def health():
             },
             "🔒 JWT Gerekli (Authorization: Bearer <token>)": {
                 "GET /vehicles": "Kullanıcının araçlarını listeler",
-                "POST /vehicles/add": "Yeni araç ekler (brand, model, year, fuelType, transmission, avgConsumption)",
+                "POST /vehicles/add": "Yeni araç ekler",
                 "PATCH /vehicles/{id}/default": "Varsayılan aracı değiştirir",
-                "DELETE /vehicles/{id}": "Araç siler (varsayılan araç silinemez)",
                 "GET /dashboard/summary": "Kullanıcının özet istatistikleri",
                 "GET /trips": "Tamamlanmış yolculuk geçmişi",
+                "POST /trips/start": "Yeni yolculuk başlatır",
+                "PATCH /trips/end/{id}": "Yolculuğu bitirir",
+                "POST /trips/{id}/location": "Tekli konum kaydeder",
+                "POST /trips/{id}/locations/bulk": "Toplu konum kaydeder",
             }
         }
     }
@@ -476,6 +483,97 @@ async def get_trips(userId: Optional[str] = None, current_user_id: str = Depends
     except Exception as e:
         print(f"TRIPS ERROR: {e}")
         raise HTTPException(status_code=500, detail="Yolculuk geçmişi alınamadı.")
+
+@app.post("/trips/start")
+async def start_trip(data: TripStart, current_user_id: str = Depends(get_current_user)):
+    if data.userId != current_user_id:
+        raise HTTPException(status_code=403, detail="Geçersiz kullanıcı ID.")
+    try:
+        if not prisma.is_connected(): await prisma.connect()
+        new_trip = await prisma.trip.create(
+            data={
+                "userId": current_user_id,
+                "vehicleId": data.vehicleId,
+                "startKm": data.startKm,
+                "isActive": True
+            }
+        )
+        return new_trip
+    except Exception as e:
+        print(f"START TRIP ERROR: {e}")
+        raise HTTPException(status_code=500, detail="Yolculuk başlatılamadı.")
+
+@app.patch("/trips/end/{trip_id}")
+async def end_trip(trip_id: str, data: TripEnd, current_user_id: str = Depends(get_current_user)):
+    try:
+        if not prisma.is_connected(): await prisma.connect()
+        updated_trip = await prisma.trip.update(
+            where={"id": trip_id},
+            data={
+                "endTime": datetime.now(),
+                "endKm": data.endKm,
+                "distanceKm": data.distanceKm,
+                "isActive": False
+            }
+        )
+        return updated_trip
+    except Exception as e:
+        print(f"END TRIP ERROR: {e}")
+        raise HTTPException(status_code=500, detail="Yolculuk bitirilemedi.")
+
+@app.post("/trips/{trip_id}/location")
+async def record_location(trip_id: str, data: LocationPointCreate, current_user_id: str = Depends(get_current_user)):
+    try:
+        if not prisma.is_connected(): await prisma.connect()
+        point = await prisma.locationpoint.create(
+            data={
+                "tripId": trip_id,
+                "latitude": data.latitude,
+                "longitude": data.longitude,
+                "timestamp": data.timestamp or datetime.now()
+            }
+        )
+        return point
+    except Exception as e:
+        print(f"RECORD LOCATION ERROR: {e}")
+        raise HTTPException(status_code=500, detail="Konum kaydedilemedi.")
+
+@app.post("/trips/{trip_id}/locations/bulk")
+async def bulk_record_locations(trip_id: str, data: LocationsBulk, current_user_id: str = Depends(get_current_user)):
+    try:
+        if not prisma.is_connected(): await prisma.connect()
+        # Prisma Python client doesn't support bulk create directly in a way that's easy for LocationPoint
+        # but we can use a loop or raw SQL. Loop is safer for small batches.
+        for loc in data.locations:
+            await prisma.locationpoint.create(
+                data={
+                    "tripId": trip_id,
+                    "latitude": loc.latitude,
+                    "longitude": loc.longitude,
+                    "timestamp": loc.timestamp or datetime.now()
+                }
+            )
+        return {"status": "success", "count": len(data.locations)}
+    except Exception as e:
+        print(f"BULK LOCATION ERROR: {e}")
+        raise HTTPException(status_code=500, detail="Toplu konum kaydı başarısız.")
+
+@app.get("/trips/{trip_id}/full-path")
+async def get_trip_full_path(trip_id: str, current_user_id: str = Depends(get_current_user)):
+    try:
+        if not prisma.is_connected(): await prisma.connect()
+        trip = await prisma.trip.find_unique(
+            where={"id": trip_id},
+            include={"locations": True}
+        )
+        if not trip or trip.userId != current_user_id:
+            raise HTTPException(status_code=404, detail="Yolculuk bulunamadı.")
+        return trip
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"FULL PATH ERROR: {e}")
+        raise HTTPException(status_code=500, detail="Yolculuk detayları alınamadı.")
 
 @app.on_event("startup")
 async def startup():
