@@ -79,6 +79,7 @@ model LocationPoint {
   id        String   @id @default(cuid())
   latitude  Float
   longitude Float
+  speed     Float?   @default(0)
   timestamp DateTime @default(now())
   tripId    String
   trip      Trip     @relation(fields: [tripId], references: [id])

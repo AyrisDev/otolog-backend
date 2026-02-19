@@ -530,6 +530,7 @@ async def record_location(trip_id: str, data: LocationPointCreate, current_user_
                 "tripId": trip_id,
                 "latitude": data.latitude,
                 "longitude": data.longitude,
+                "speed": data.speed,
                 "timestamp": data.timestamp or datetime.now()
             }
         )
@@ -550,6 +551,7 @@ async def bulk_record_locations(trip_id: str, data: LocationsBulk, current_user_
                     "tripId": trip_id,
                     "latitude": loc.latitude,
                     "longitude": loc.longitude,
+                    "speed": loc.speed,
                     "timestamp": loc.timestamp or datetime.now()
                 }
             )
