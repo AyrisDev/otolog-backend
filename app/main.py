@@ -26,6 +26,13 @@ except:
 app = FastAPI(title="OtoLog API - Car Search V8")
 prisma = Prisma()
 
+# Helper for DB connection check (avoiding redundant calls)
+async def get_prisma():
+    if not prisma.is_connected():
+        await prisma.connect()
+    return prisma
+
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -524,41 +531,61 @@ async def end_trip(trip_id: str, data: TripEnd, current_user_id: str = Depends(g
 @app.post("/trips/{trip_id}/location")
 async def record_location(trip_id: str, data: LocationPointCreate, current_user_id: str = Depends(get_current_user)):
     try:
-        if not prisma.is_connected(): await prisma.connect()
-        point = await prisma.locationpoint.create(
+        db = await get_prisma()
+        
+        # Trip kontrolü (Opsiyonel ama güvenli)
+        trip = await db.trip.find_unique(where={"id": trip_id})
+        if not trip:
+            raise HTTPException(status_code=404, detail="Yolculuk bulunamadı.")
+            
+        point = await db.locationpoint.create(
             data={
                 "tripId": trip_id,
                 "latitude": data.latitude,
                 "longitude": data.longitude,
-                "speed": data.speed,
+                "speed": data.speed or 0,
                 "timestamp": data.timestamp or datetime.now()
             }
         )
-        return point
+        return {"status": "success", "id": point.id}
     except Exception as e:
         print(f"RECORD LOCATION ERROR: {e}")
-        raise HTTPException(status_code=500, detail="Konum kaydedilemedi.")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Konum kaydedilemedi: {str(e)}")
+
 
 @app.post("/trips/{trip_id}/locations/bulk")
 async def bulk_record_locations(trip_id: str, data: LocationsBulk, current_user_id: str = Depends(get_current_user)):
     try:
-        if not prisma.is_connected(): await prisma.connect()
-        # Prisma Python client doesn't support bulk create directly in a way that's easy for LocationPoint
-        # but we can use a loop or raw SQL. Loop is safer for small batches.
-        for loc in data.locations:
-            await prisma.locationpoint.create(
-                data={
-                    "tripId": trip_id,
-                    "latitude": loc.latitude,
-                    "longitude": loc.longitude,
-                    "speed": loc.speed,
-                    "timestamp": loc.timestamp or datetime.now()
-                }
-            )
-        return {"status": "success", "count": len(data.locations)}
+        if not data.locations:
+            return {"status": "success", "count": 0}
+            
+        db = await get_prisma()
+        
+        # Trip kontrolü
+        trip = await db.trip.find_unique(where={"id": trip_id})
+        if not trip:
+             raise HTTPException(status_code=404, detail="Yolculuk bulunamadı.")
+
+        # create_many kullanarak çok daha hızlı kayıt
+        record_data = [
+            {
+                "tripId": trip_id,
+                "latitude": loc.latitude,
+                "longitude": loc.longitude,
+                "speed": loc.speed or 0,
+                "timestamp": loc.timestamp or datetime.now()
+            }
+            for loc in data.locations
+        ]
+        
+        count = await db.locationpoint.create_many(data=record_data)
+        return {"status": "success", "count": count}
     except Exception as e:
         print(f"BULK LOCATION ERROR: {e}")
-        raise HTTPException(status_code=500, detail="Toplu konum kaydı başarısız.")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Toplu konum kaydı başarısız: {str(e)}")
+
 
 @app.get("/trips/{trip_id}/full-path")
 async def get_trip_full_path(trip_id: str, current_user_id: str = Depends(get_current_user)):
