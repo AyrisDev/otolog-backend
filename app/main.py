@@ -58,6 +58,8 @@ class FuelCreate(BaseModel):
     liters: float
     totalPrice: float
     currentKm: float
+    date: Optional[datetime] = None
+    stationName: Optional[str] = None
 
 class LocationPointCreate(BaseModel):
     latitude: float
@@ -348,8 +350,8 @@ async def add_fuel(data: FuelCreate, current_user_id: str = Depends(get_current_
                 "liters": data.liters,
                 "totalPrice": data.totalPrice,
                 "currentKm": data.currentKm,
-                "date": datetime.now(),
-                "stationName": "Bilinmiyor", # Frontend'den gelmiyor, varsayılan
+                "date": data.date if data.date else datetime.now(timezone.utc),
+                "stationName": data.stationName if data.stationName else "Bilinmiyor",
                 "fuelType": default_vehicle.fuelType or "Bilinmiyor"
             }
         )
