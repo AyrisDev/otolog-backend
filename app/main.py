@@ -462,16 +462,44 @@ async def get_summary(userId: Optional[str] = None, current_user_id: str = Depen
     try:
         if not prisma.is_connected(): await prisma.connect()
         trips = await prisma.trip.find_many(where={"userId": active_id, "isActive": False})
-        fuel = await prisma.fuellog.find_many(where={"userId": active_id})
         
-        total_km = sum(t.distanceKm or 0 for t in trips)
+        # Order fuel logs correctly by currentKm to find distance
+        fuel = await prisma.fuellog.find_many(where={"userId": active_id}, order={"currentKm": "asc"})
+        
+        # Odometer differences from fuel logs
+        odo_distance = 0
+        if len(fuel) >= 2:
+            odo_distance = fuel[-1].currentKm - fuel[0].currentKm
+
+        trip_km = sum(t.distanceKm or 0 for t in trips)
+        
+        total_km = max(trip_km, odo_distance)
         total_spend = sum(f.totalPrice for f in fuel)
         total_liters = sum(f.liters for f in fuel)
         
+        avg_consumption = 0
+        
+        # Try calculating from fuel logs first
+        if odo_distance > 0:
+            used_liters = sum(f.liters for f in fuel[1:]) # liters consumed during odo_distance
+            if used_liters > 0:
+                avg_consumption = (used_liters / odo_distance) * 100
+                
+        # If no valid fuel logs to calculate, fallback to vehicle default
+        if avg_consumption == 0:
+            user_data = await prisma.user.find_unique(where={"id": active_id}, include={"vehicles": True})
+            if user_data and user_data.vehicles:
+                default_vehicle = next((v for v in user_data.vehicles if v.isDefault), user_data.vehicles[0])
+                avg_consumption = default_vehicle.avgConsumption or 0
+
+        # If STILL zero, fallback to naive total_liters / total_km if total_km > 0
+        if avg_consumption == 0 and total_km > 0 and total_liters > 0:
+            avg_consumption = (total_liters / total_km) * 100
+
         return {
             "total_km": round(total_km, 2),
             "total_spend": round(total_spend, 2),
-            "avg_consumption": round((total_liters / (total_km / 100)), 2) if total_km > 0 else 0,
+            "avg_consumption": round(avg_consumption, 2),
             "trip_count": len(trips)
         }
     except Exception as e:
