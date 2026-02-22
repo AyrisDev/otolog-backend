@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from prisma import Prisma
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from jose import JWTError, jwt
 import traceback
 import os
@@ -96,8 +96,8 @@ async def get_current_user(token: str = Header(None, alias="Authorization")):
 async def health():
     return {
         "status": "ok",
-        "version": "v11",
-        "timestamp": datetime.now(),
+        "version": "v13",
+        "timestamp": datetime.now(timezone.utc),
         "endpoints": {
             "🔓 Açık": {
                 "GET /health": "API durumu ve endpoint listesi",
@@ -544,7 +544,7 @@ async def record_location(trip_id: str, data: LocationPointCreate, current_user_
                 "latitude": data.latitude,
                 "longitude": data.longitude,
                 "speed": data.speed or 0,
-                "timestamp": data.timestamp or datetime.now()
+                "timestamp": data.timestamp or datetime.now(timezone.utc)
             }
         )
         return {"status": "success", "id": point.id}
@@ -574,7 +574,7 @@ async def bulk_record_locations(trip_id: str, data: LocationsBulk, current_user_
                 "latitude": loc.latitude,
                 "longitude": loc.longitude,
                 "speed": loc.speed or 0,
-                "timestamp": loc.timestamp or datetime.now()
+                "timestamp": loc.timestamp or datetime.now(timezone.utc)
             }
             for loc in data.locations
         ]
