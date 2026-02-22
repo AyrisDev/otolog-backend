@@ -496,11 +496,27 @@ async def get_summary(userId: Optional[str] = None, current_user_id: str = Depen
         if avg_consumption == 0 and total_km > 0 and total_liters > 0:
             avg_consumption = (total_liters / total_km) * 100
 
+        # Performance Metrics: Max and Avg Speed
+        speed_stats = await prisma.locationpoint.group_by(
+            by=['tripId'],
+            where={"trip": {"userId": active_id, "isActive": False}},
+            avg={'speed': True},
+            max={'speed': True}
+        )
+        max_speed = 0
+        avg_speed = 0
+        if speed_stats:
+            max_speed = max((s.get('_max', {}).get('speed') or 0) for s in speed_stats)
+            valid_avgs = [s.get('_avg', {}).get('speed') or 0 for s in speed_stats if s.get('_avg', {}).get('speed')]
+            avg_speed = sum(valid_avgs) / len(valid_avgs) if valid_avgs else 0
+
         return {
             "total_km": round(total_km, 2),
             "total_spend": round(total_spend, 2),
             "avg_consumption": round(avg_consumption, 2),
-            "trip_count": len(trips)
+            "trip_count": len(trips),
+            "max_speed": round(max_speed, 1),
+            "avg_speed": round(avg_speed, 1)
         }
     except Exception as e:
         print(f"SUMMARY ERROR: {e}")
