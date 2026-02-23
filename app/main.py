@@ -452,8 +452,35 @@ async def device_login(request: Request, x_device_id: Optional[str] = Header(Non
 
 # --- DİĞER KORUMALI ENDPOINTLER ---
 
+@app.delete("/trips/{trip_id}")
+async def delete_trip(trip_id: str, userId: Optional[str] = None, current_user_id: str = Depends(get_current_user)):
+    active_id = userId if (userId and userId != "undefined") else current_user_id
+    if active_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Yetkisiz veri erişimi.")
+        
+    try:
+        if not prisma.is_connected(): await prisma.connect()
+        
+        # Verify ownership
+        trip = await prisma.trip.find_unique(where={"id": trip_id})
+        if not trip:
+            raise HTTPException(status_code=404, detail="Yolculuk bulunamadı.")
+        if trip.userId != active_id:
+            raise HTTPException(status_code=403, detail="Bu yolculuğu silme yetkiniz yok.")
+            
+        # Prisma will handle cascade deletes if set in schema, otherwise we delete points first
+        await prisma.locationpoint.delete_many(where={"tripId": trip_id})
+        await prisma.trip.delete(where={"id": trip_id})
+        
+        return {"status": "success", "message": "Yolculuk başarıyla silindi"}
+    except Exception as e:
+        print(f"TRIP DELETE ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Yolculuk silinemedi.")
+
 @app.get("/dashboard/daily-stats")
-async def get_daily_stats(userId: Optional[str] = None, current_user_id: str = Depends(get_current_user)):
+async def get_daily_stats(userId: Optional[str] = None, period: str = "weekly", current_user_id: str = Depends(get_current_user)):
     active_id = userId if (userId and userId != "undefined") else current_user_id
     if active_id != current_user_id:
         raise HTTPException(status_code=403, detail="Yetkisiz veri erişimi.")
@@ -462,21 +489,31 @@ async def get_daily_stats(userId: Optional[str] = None, current_user_id: str = D
         if not prisma.is_connected(): await prisma.connect()
         
         now = datetime.now(timezone.utc)
-        start_of_week = now - timedelta(days=now.weekday())
-        start_of_week = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
+        from calendar import monthrange
+        
+        if period == "yearly":
+            start_date = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+            segments = 12
+        elif period == "monthly":
+            start_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            segments = 4
+        else: # weekly
+            start_date = now - timedelta(days=now.weekday())
+            start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+            segments = 7
         
         trips = await prisma.trip.find_many(
             where={
                 "userId": active_id, 
                 "isActive": False,
-                "startTime": {"gte": start_of_week}
+                "startTime": {"gte": start_date}
             }
         )
         
         fuels = await prisma.fuellog.find_many(
             where={
                 "userId": active_id,
-                "date": {"gte": start_of_week}
+                "date": {"gte": start_date}
             }
         )
         
@@ -493,12 +530,26 @@ async def get_daily_stats(userId: Optional[str] = None, current_user_id: str = D
         speed_stats_map = {s.get('tripId'): s for s in speed_stats if s.get('tripId')}
         
         daily_stats = []
-        for i in range(7):
-            day_target = start_of_week + timedelta(days=i)
-            next_day = day_target + timedelta(days=1)
+        for i in range(segments):
+            if period == "yearly":
+                seg_start = start_date.replace(month=i+1)
+                if i == 11:
+                    seg_end = seg_start.replace(year=seg_start.year+1, month=1)
+                else:
+                    seg_end = start_date.replace(month=i+2)
+            elif period == "monthly":
+                seg_start = start_date + timedelta(days=i*7)
+                if i == 3:
+                    _, last_day = monthrange(now.year, now.month)
+                    seg_end = start_date + timedelta(days=last_day)
+                else:
+                    seg_end = start_date + timedelta(days=(i+1)*7)
+            else:
+                seg_start = start_date + timedelta(days=i)
+                seg_end = seg_start + timedelta(days=1)
             
-            day_trips = [t for t in trips if t.startTime and day_target <= t.startTime < next_day]
-            day_fuels = [f for f in fuels if f.date and day_target <= f.date < next_day]
+            day_trips = [t for t in trips if t.startTime and seg_start <= t.startTime < seg_end]
+            day_fuels = [f for f in fuels if f.date and seg_start <= f.date < seg_end]
             
             day_km = sum(t.distanceKm or 0 for t in day_trips)
             day_spend = sum(f.totalPrice for f in day_fuels)
