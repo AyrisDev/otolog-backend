@@ -6,4 +6,5 @@ passlib[bcrypt]
 python-jose[cryptography]
 python-multipart
 python-dotenv
-requestsmeilisearch
+requests
+meilisearch
