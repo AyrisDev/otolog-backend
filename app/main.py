@@ -452,6 +452,89 @@ async def device_login(request: Request, x_device_id: Optional[str] = Header(Non
 
 # --- DİĞER KORUMALI ENDPOINTLER ---
 
+@app.get("/dashboard/daily-stats")
+async def get_daily_stats(userId: Optional[str] = None, current_user_id: str = Depends(get_current_user)):
+    active_id = userId if (userId and userId != "undefined") else current_user_id
+    if active_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Yetkisiz veri erişimi.")
+        
+    try:
+        if not prisma.is_connected(): await prisma.connect()
+        
+        now = datetime.now(timezone.utc)
+        start_of_week = now - timedelta(days=now.weekday())
+        start_of_week = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        trips = await prisma.trip.find_many(
+            where={
+                "userId": active_id, 
+                "isActive": False,
+                "startTime": {"gte": start_of_week}
+            }
+        )
+        
+        fuels = await prisma.fuellog.find_many(
+            where={
+                "userId": active_id,
+                "date": {"gte": start_of_week}
+            }
+        )
+        
+        trip_ids = [t.id for t in trips]
+        speed_stats = []
+        if trip_ids:
+            speed_stats = await prisma.locationpoint.group_by(
+                by=['tripId'],
+                where={"tripId": {"in": trip_ids}},
+                avg={'speed': True},
+                max={'speed': True}
+            )
+            
+        speed_stats_map = {s.get('tripId'): s for s in speed_stats if s.get('tripId')}
+        
+        daily_stats = []
+        for i in range(7):
+            day_target = start_of_week + timedelta(days=i)
+            next_day = day_target + timedelta(days=1)
+            
+            day_trips = [t for t in trips if t.startTime and day_target <= t.startTime < next_day]
+            day_fuels = [f for f in fuels if f.date and day_target <= f.date < next_day]
+            
+            day_km = sum(t.distanceKm or 0 for t in day_trips)
+            day_spend = sum(f.totalPrice for f in day_fuels)
+            
+            day_max_speed = 0
+            valid_avgs = []
+            
+            for t in day_trips:
+                s_stat = speed_stats_map.get(t.id)
+                if s_stat:
+                    trip_max = s_stat.get('_max', {}).get('speed') or 0
+                    if trip_max > day_max_speed:
+                        day_max_speed = trip_max
+                    
+                    trip_avg = s_stat.get('_avg', {}).get('speed') or 0
+                    if trip_avg > 0:
+                        valid_avgs.append(trip_avg)
+                        
+            day_avg_speed = sum(valid_avgs) / len(valid_avgs) if valid_avgs else 0
+                
+            daily_stats.append({
+                "day_index": i,
+                "total_km": round(day_km, 2),
+                "total_spend": round(day_spend, 2),
+                "trip_count": len(day_trips),
+                "max_speed": round(day_max_speed, 1),
+                "avg_speed": round(day_avg_speed, 1)
+            })
+            
+        return daily_stats
+    except Exception as e:
+        print(f"DAILY STATS ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Günlük istatistikler alınamadı.")
+
 @app.get("/dashboard/summary")
 async def get_summary(userId: Optional[str] = None, current_user_id: str = Depends(get_current_user)):
     # Güvenlik Kontrolü: Sadece kendi verisini görebilir
