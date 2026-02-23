@@ -16,7 +16,9 @@ import requests
 load_dotenv()
 
 # --- GÜVENLİK AYARLARI ---
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "7b8d4b7d-a7c7-4824-8d74-7e6489378878-STITCHED-OtoLog")
+SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    print("WARNING: JWT_SECRET_KEY is missing from .env variables.")
 ALGORITHM = "HS256"
 try:
     ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", str(60 * 24 * 30)))
@@ -25,6 +27,18 @@ except:
 
 app = FastAPI(title="OtoLog API - Car Search V8")
 prisma = Prisma()
+
+try:
+    import meilisearch
+    MEILI_URL = os.getenv("MEILI_URL")
+    MEILI_KEY = os.getenv("MEILI_KEY")
+    if MEILI_URL and MEILI_KEY:
+        meili_client = meilisearch.Client(MEILI_URL, MEILI_KEY)
+    else:
+        raise ValueError("Missing Meilisearch variables in .env")
+except Exception as e:
+    meili_client = None
+    print("Meilisearch not configured:", e)
 
 # Helper for DB connection check (avoiding redundant calls)
 async def get_prisma():
@@ -137,6 +151,17 @@ async def get_car_makes():
     except Exception as e:
         print(f"Error fetching makes: {e}")
         return []
+
+@app.get("/cars/search")
+async def search_cars(q: str):
+    if not meili_client:
+        raise HTTPException(status_code=500, detail="Arama motoru aktif değil. (Meilisearch hatası)")
+    try:
+        res = meili_client.index('cars').search(q, {'limit': 50})
+        return res.get('hits', [])
+    except Exception as e:
+        print(f"Meilisearch Error: {e}")
+        raise HTTPException(status_code=500, detail="Arama başarısız, lütfen tekrar deneyin.")
 
 @app.get("/cars/models")
 async def get_car_models(make: str):
